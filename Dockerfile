@@ -53,7 +53,8 @@ RUN set -eux; \
     tudou_ref="${TUDOU_REF}"; \
     if ! git ls-remote --heads "${TUDOU_REPO}" "${TUDOU_REF}" | grep -q .; then tudou_ref=master; fi; \
     git clone --depth 1 --branch "$tudou_ref" "${TUDOU_REPO}" tudou-meme \
-      || { echo "[WARN] tudou-meme repo clone failed, creating empty dir"; mkdir -p tudou-meme/meme; };
+      || { echo "[WARN] tudou-meme repo clone failed, creating empty dir"; mkdir -p tudou-meme/meme; }; \
+    touch tudou-meme/meme/__init__.py
 
 # Copy aggregation tool and run it to produce infos.json and keyMap.json
 COPY scripts/aggregate_packs.py /opt/tools/aggregate_packs.py

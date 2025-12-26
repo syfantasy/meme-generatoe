@@ -8,7 +8,7 @@ ARG NSFW_REPO=https://github.com/anyliew/meme_emoji_nsfw.git
 ARG NSFW_REF=main
 ARG JJ_REPO=https://github.com/jinjiao007/meme-generator-jj.git
 ARG JJ_REF=main
-ARG TUDOU_REPO=https://github.com/tudougin/tudou-meme.git
+ARG TUDOU_REPO=https://github.com/LRZ9712/tudou-meme.git
 ARG TUDOU_REF=main
 
 # Builder stage: clone repos and aggregate pack metadata

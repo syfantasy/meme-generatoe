@@ -7,6 +7,7 @@ This repo builds a unified Docker image that bundles:
 - Emoji pack: `anyliew/meme_emoji`
 - Emoji NSFW pack: `anyliew/meme_emoji_nsfw`
 - JJ pack: `jinjiao007/meme-generator-jj`
+- Tudou pack: `tudougin/tudou-meme`
 
 During the Docker build, all packs are scanned and aggregated into two static JSON files for fast lookup:
 
@@ -26,6 +27,7 @@ docker build \
   --build-arg EMOJI_REF=main \
   --build-arg NSFW_REF=main \
   --build-arg JJ_REF=main \
+  --build-arg TUDOU_REF=main \
   -t unified-meme:dev .
 ```
 

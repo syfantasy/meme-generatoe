@@ -47,6 +47,53 @@ let keyMap = {}
 let infos = {}
 
 /**
+ * 模块级元数据补载以保证热重载可用。
+ *
+ * Yunzai 的热重载（lib/plugins/loader.js 的 changePlugin）只会 new 出插件实例并注册
+ * handler，不会调用 plugin.init()；而每条消息都会 new 一次插件类并用其 rule 去匹配，
+ * 所以热重载后若 infos/keyMap 为空：随机meme/列表等命令会以为「没有 meme」，
+ * 各个表情关键词的命令也会全部失效。这里在模块加载时先同步读本地缓存兜底。
+ */
+function loadMetadataFromCache() {
+  try {
+    mkdirs(memeDataDir)
+    const cachedInfos = readJsonObject(path.join(memeDataDir, 'infos.json'))
+    const cachedKeyMap = readJsonObject(path.join(memeDataDir, 'keyMap.json'))
+    if (isNonEmptyObject(cachedInfos) && isNonEmptyObject(cachedKeyMap)) {
+      infos = cachedInfos
+      keyMap = cachedKeyMap
+    }
+  } catch (error) {
+    logger.error(`meme 本地元数据读取失败：${error.message}`)
+  }
+}
+
+loadMetadataFromCache()
+
+/** 正在进行的补载任务，避免并发重复拉取 */
+let metadataTask = null
+
+/**
+ * 需要元数据的命令入口调用：缓存缺失时按需拉取一次（含热重载后的自愈）。
+ * @param {object} instance 插件实例（仅用于调用 init）
+ * @returns {Promise<boolean>} 元数据是否可用
+ */
+async function ensureMetadataLoaded(instance) {
+  if (isNonEmptyObject(infos) && isNonEmptyObject(keyMap)) return true
+  if (!metadataTask) {
+    metadataTask = instance.init()
+      .catch(error => {
+        logger.error(`meme 元数据加载失败：${error.message}`)
+      })
+      .finally(() => {
+        metadataTask = null
+      })
+  }
+  await metadataTask
+  return isNonEmptyObject(infos) && isNonEmptyObject(keyMap)
+}
+
+/**
  * 主人保护list 如['lash','do','beat_up','little_do']
  */
 let protectList = ['lash', 'do', 'beat_up', 'little_do']
@@ -240,9 +287,14 @@ export class memes extends plugin {
   }
 
   async memesSearch(e) {
+    await ensureMetadataLoaded(this)
     let search = e.msg.replace(/^#?(meme(s)?|表情包)搜索/, '').trim()
     if (!search) {
       await e.reply('你要搜什么？')
+      return true
+    }
+    if (!isNonEmptyObject(keyMap)) {
+      await e.reply('meme 数据尚未加载，请先发送「meme更新」', true)
       return true
     }
     let hits = Object.keys(keyMap).filter(k => k.indexOf(search) > -1)
@@ -260,6 +312,7 @@ export class memes extends plugin {
 
   async memesList(e) {
     try {
+      await ensureMetadataLoaded(this)
       const memeKeys = Object.keys(infos)
         .filter(key => infos[key]?.params_type)
         .sort((a, b) => {
@@ -337,6 +390,7 @@ export class memes extends plugin {
    * @return {*}
    */
   async randomMemes(e) {
+    await ensureMetadataLoaded(this)
     let keys = Object.keys(infos).filter(key => infos[key]?.params_type?.min_images === 1 && infos[key]?.params_type?.min_texts === 0)
     if (keys.length === 0) {
       await e.reply('当前没有可用于随机生成的 meme', true)
@@ -353,6 +407,7 @@ export class memes extends plugin {
    * 图片数量固定时按固定数量抽取；图片数量为区间时，在区间内随机抽取。
    */
   async randomMeme(e) {
+    await ensureMetadataLoaded(this)
     if (!e.group || typeof e.group.getMemberMap !== 'function') {
       await e.reply('「随机+表情名称」只能在群聊中使用', true)
       return true
@@ -431,6 +486,7 @@ export class memes extends plugin {
    */
   async memes(e) {
     // console.log(e)
+    await ensureMetadataLoaded(this)
     let msg = e.msg.replace('#', '')
     /**
    * 智能匹配最长关键词

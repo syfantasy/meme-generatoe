@@ -48,6 +48,52 @@ The live render API and the dynamic `infos.json` / `keyMap.json` endpoints use
 the updated source trees. `/app/data/assets` is the build-time aggregate and is
 kept mainly as a static fallback.
 
+## Pre-rendered meme list (静态列表)
+
+The Yunzai `#meme列表` command used to wait for an on-demand render
+(`POST /memes/render_list`): ~7s per page of 200 memes, plus a cold start when
+the host has spun the service down. The image therefore bakes those pages into
+the image at build time and serves them as plain static files:
+
+```
+GET /memes/static/list/manifest.json          # page plan + meme keys + version
+GET /memes/static/list/p1-<version>.png       # rendered page 1
+GET /memes/static/list/p2-<version>.png       # ...
+```
+
+Page files are versioned by a signature over the meme set, the page size, the
+text template and the git HEAD of every bundled repository, and the manifest is
+published last, so a rebuild never exposes a page that does not belong to the
+current manifest. The manifest lists the meme key of every page, which lets the
+client confirm that the baked pages still describe the meme set it sees in
+`/memes/static/infos.json`; when it does not match, the client falls back to
+`POST /memes/render_list` and nothing breaks.
+
+At container start `scripts/entrypoint.sh` compares the baked pages with the
+meme set it actually loaded (the startup repository sync may have pulled newer
+memes) and rebuilds them in the background when they differ. The rebuild runs
+in the already-loaded process, so it costs no extra meme assets in memory.
+
+Runtime controls:
+
+- `MEME_STATIC_LIST_DIR` — output directory, default `/app/static/meme-list`
+- `MEME_STATIC_LIST_PAGE_SIZE` — memes per page, default `200`; must match the
+  client's `MEME_LIST_PAGE_SIZE` or the client ignores the static pages
+- `MEME_STATIC_LIST_TEXT_TEMPLATE` — default `{index}. {keywords}`
+- `MEME_STATIC_LIST_CATEGORY_ICON` — default `true`
+- `MEME_STATIC_LIST_REFRESH` — `auto` (rebuild only when stale, default),
+  `always` (rebuild on every boot), or `never`
+
+Rebuild or inspect manually:
+
+```
+python3 /app/tools/static_list_builder.py --out /app/static/meme-list
+python3 /app/tools/static_list_builder.py --out /app/static/meme-list --check  # exit 0 = up to date
+```
+
+The matching Yunzai client (static list first, on-demand render as fallback)
+lives in `integrations/yunzai-meme-plugin/meme.js`.
+
 ## Build Locally
 
 Requires Docker with Buildx.

@@ -171,7 +171,20 @@ RUN pip install --no-cache-dir --upgrade pip \
 
 COPY scripts/sync_repos.sh /usr/local/bin/sync-meme-repos
 COPY scripts/entrypoint.sh /entrypoint.sh
+COPY scripts/static_list_builder.py /app/tools/static_list_builder.py
 RUN chmod +x /usr/local/bin/sync-meme-repos /entrypoint.sh
+
+# Pre-rendered meme list pages for the Yunzai `#meme列表` command: the client
+# fetches /memes/static/list/manifest.json + /memes/static/list/p<N>-<version>.png
+# instead of waiting for an on-demand render. scripts/entrypoint.sh rebuilds the
+# pages in the background whenever the startup repository sync changes the meme
+# set, so a pre-render failure here is not fatal.
+ENV MEME_STATIC_LIST_DIR=/app/static/meme-list \
+    MEME_STATIC_LIST_PAGE_SIZE=200 \
+    MEME_STATIC_LIST_REFRESH=auto
+RUN pip install --no-cache-dir pypinyin \
+ && python3 /app/tools/static_list_builder.py --out /app/static/meme-list \
+ || echo "[WARN] static meme list pre-render failed; the runtime will rebuild it in the background"
 
 ENV MEME_DATA_DIR=/app/data
 ENV MEME_GENERATOR_REPO=${MEME_GENERATOR_REPO} \

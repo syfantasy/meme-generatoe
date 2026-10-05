@@ -237,19 +237,12 @@ def _openai_translate(text: str, lang_from: str = "auto", lang_to: str = "zh") -
 _utils.translate = _openai_translate
 print("[bootstrap] translate() monkey-patched for OpenAI provider", flush=True)
 
-# Load builtin memes from source tree first (assets guaranteed), fallback to installed package
-src_memes_dir = Path("/app/meme-generator/meme_generator/memes")
-if src_memes_dir.exists():
-    print(f"[bootstrap] Loading builtin memes from source: {src_memes_dir}", flush=True)
-    load_memes(str(src_memes_dir))
-else:
-    pkg_dir = Path(importlib.import_module('meme_generator').__file__).parent
-    memes_dir = pkg_dir / 'memes'
-    print(f"[bootstrap] Loading builtin memes from package: {memes_dir}", flush=True)
-    if memes_dir.exists():
-        for path in memes_dir.iterdir():
-            if path.is_dir():
-                load_meme(f"meme_generator.memes.{path.name}")
+# Meme loading is shared with scripts/static_list_builder.py so that the list
+# pages baked into the image and this runtime always describe the same memes.
+import sys as _sys
+_sys.path.insert(0, "/app/tools")
+import static_list_builder as slb
+print("[bootstrap] Meme loading delegated to static_list_builder.load_all_memes()", flush=True)
 
 # Prepend an override for /memes/render_list that computes the list at request time
 class MemeKeyWithProperties(BaseModel):
@@ -292,12 +285,8 @@ def render_list(params: RenderMemeListRequest = RenderMemeListRequest()):
     return Response(content=content, media_type=media_type)
 
 # Register API routers from meme_generator (after our override so it remains first)
-load_memes("/app/meme-generator-contrib/memes")
-load_memes("/app/meme_emoji/emoji")
-load_memes("/app/meme_emoji_nsfw/emoji")
-load_memes("/app/meme-generator-jj/memes")
-load_memes("/app/tudou-meme/meme")
-load_memes("/app/meme-generator-cute/memes")
+_loaded_meme_dirs = slb.load_all_memes()
+print(f"[bootstrap] Loaded meme dirs: {', '.join(str(p) for p in _loaded_meme_dirs)}", flush=True)
 register_routers()
 
 # Mount static aggregated data under /memes/static
@@ -359,7 +348,74 @@ def keymap_json():
     _, keymap = build_infos_and_keymap()
     return keymap
 
+# Static, pre-rendered meme list pages (see scripts/static_list_builder.py). Mounted
+# before the generic /memes/static mount so /memes/static/list/... resolves here.
+static_list_dir = Path(os.environ.get("MEME_STATIC_LIST_DIR", "/app/static/meme-list"))
+try:
+    static_list_dir.mkdir(parents=True, exist_ok=True)
+except OSError as exc:
+    print(f"[static-list] cannot create {static_list_dir}: {exc}", flush=True)
+app.mount("/memes/static/list", StaticFiles(directory=str(static_list_dir)), name="meme-static-list")
+
 app.mount("/memes/static", StaticFiles(directory=data_dir), name="static")
+
+def _static_list_page_size():
+    raw = os.environ.get("MEME_STATIC_LIST_PAGE_SIZE") or os.environ.get("MEME_LIST_PAGE_SIZE") or "200"
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError):
+        return 200
+    return value if 1 <= value <= 1000 else 200
+
+
+def _refresh_static_list():
+    """Rebuild the baked list pages when the runtime meme set no longer matches."""
+    mode = (os.environ.get("MEME_STATIC_LIST_REFRESH") or "auto").strip().lower()
+    if mode in {"0", "false", "no", "off", "never", "disabled"}:
+        print("[static-list] background refresh disabled", flush=True)
+        return
+    try:
+        page_size = _static_list_page_size()
+        template = os.environ.get("MEME_STATIC_LIST_TEXT_TEMPLATE") or slb.DEFAULT_TEXT_TEMPLATE
+        category_icon = (os.environ.get("MEME_STATIC_LIST_CATEGORY_ICON") or "true").strip().lower() not in {
+            "0", "false", "no", "off"
+        }
+        entries = slb.ordered_entries()
+        heads = slb.repo_heads()
+        manifest = slb.load_manifest(static_list_dir)
+        force = mode in {"always", "force", "rebuild"}
+        if not force and slb.manifest_is_current(
+            manifest, entries, page_size, template, category_icon, heads, static_list_dir
+        ):
+            print(f"[static-list] baked pages are up to date (version {manifest.get('version')})", flush=True)
+            return
+        print(f"[static-list] rebuilding pages for {len(entries)} memes into {static_list_dir}", flush=True)
+        slb.build(
+            out_dir=static_list_dir,
+            page_size=page_size,
+            template=template,
+            category_icon=category_icon,
+            entries=entries,
+            heads=heads,
+        )
+    except Exception as exc:
+        print(f"[static-list] background rebuild failed: {exc!r}", flush=True)
+
+
+import threading as _threading
+import time as _time
+
+
+def _start_static_list_refresh():
+    """Deferred so startup serving is not delayed by the first render."""
+    _threading.Thread(
+        target=lambda: (_time.sleep(8), _refresh_static_list()),
+        daemon=True,
+        name="static-list-refresh",
+    ).start()
+
+
+_start_static_list_refresh()
 
 port = int(os.environ.get("PORT", "8000"))
 print(f"[bootstrap] Starting uvicorn on 0.0.0.0:{port}", flush=True)
